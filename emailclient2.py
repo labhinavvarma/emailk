@@ -1,27 +1,32 @@
-import requests
+# router.py
+from fastapi import APIRouter, Request, HTTPException
+from pydantic import ValidationError
+from mcpserver import mcp
 
-# Replace with your EC2 public IP or DNS
-EC2_SERVER_URL = "http://3.92.107.123:8000/invoke"  # <-- Update this
+route = APIRouter()
 
-# Tool payload
-payload = {
-    "tool": "mcp-send-email",
-    "input": {
-        "subject": "🌐 Email from EC2 MCP Server",
-        "body": "<p>This email was sent from a FastAPI server running on EC2.</p>",
-        "receivers": "you@example.com"
-    }
-}
+@route.post("/invoke")
+async def invoke_tool(request: Request):
+    try:
+        payload = await request.json()
+        tool_name = payload.get("tool")
+        tool_input = payload.get("input", {})
 
-try:
-    print(f"📡 Sending request to {EC2_SERVER_URL} ...")
-    response = requests.post(EC2_SERVER_URL, json=payload)
-    response.raise_for_status()
-    result = response.json()
-    print("✅ Response from server:")
-    print(result["content"])
-except requests.RequestException as e:
-    print("❌ Request failed:")
-    print(e)
-    if e.response is not None:
-        print(e.response.text)
+        if not tool_name:
+            raise HTTPException(status_code=400, detail="Missing tool name")
+
+        # ✅ Access tool from internal tool registry
+        tool = mcp._tool_registry.get(tool_name)
+
+        if not tool:
+            raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+        result = await tool.invoke(tool_input)
+        return {"type": result.type, "content": result.text}
+
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=ve.errors())
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
+
